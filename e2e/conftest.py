@@ -163,6 +163,8 @@ def admin_base_url(
         provider_id: str,
         base_url: str,
         path: str,
+        *,
+        api_key: str = "",
     ) -> dict[str, object]:
         return {
             "provider_id": provider_id,

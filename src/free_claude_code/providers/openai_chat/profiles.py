@@ -106,6 +106,7 @@ class OpenAIChatProfile:
     model_ids_are_routable: bool = True
     model_listing: OpenAIModelListing = OpenAIModelListing()
     normalize_base_url: bool = False
+    credential_optional: bool = False
     reasoning_delta_field: Literal["reasoning_content", "reasoning"] = (
         "reasoning_content"
     )
@@ -655,5 +656,15 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ),
         normalize_base_url=True,
         reasoning_delta_field="reasoning",
+    ),
+    "custom": OpenAIChatProfile(
+        _policy(
+            "CUSTOM",
+            ReasoningReplayMode.DISABLED,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+        normalize_base_url=True,
+        credential_optional=True,
     ),
 }

@@ -1544,7 +1544,7 @@ def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
         async def __aexit__(self, *args):
             return None
 
-        async def get(self, url: str):
+        async def get(self, url: str, headers=None):
             return httpx.Response(200, json={"data": []})
 
     with patch("free_claude_code.api.admin_routes.httpx.AsyncClient", FakeAsyncClient):
@@ -1553,6 +1553,91 @@ def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
     assert response.status_code == 200
     providers = response.json()["providers"]
     assert {provider["status"] for provider in providers} == {"reachable"}
+
+
+def test_admin_custom_provider_status_sends_configured_api_key(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("CUSTOM_BASE_URL", "http://custom.local/v1")
+    monkeypatch.setenv("CUSTOM_API_KEY", "custom-secret-key")
+    app = create_test_app()
+
+    observed_headers: dict[str, dict[str, str]] = {}
+
+    class AuthCheckingAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url: str, headers=None):
+            observed_headers[url] = dict(headers or {})
+            if url.startswith("http://custom.local/v1"):
+                authorized = (headers or {}).get("Authorization") == (
+                    "Bearer custom-secret-key"
+                )
+                return httpx.Response(200 if authorized else 401, json={"data": []})
+            return httpx.Response(200, json={"data": []})
+
+    with patch(
+        "free_claude_code.api.admin_routes.httpx.AsyncClient",
+        AuthCheckingAsyncClient,
+    ):
+        response = _local_client(app).get("/admin/api/providers/local-status")
+
+    assert response.status_code == 200
+    providers = {
+        provider["provider_id"]: provider for provider in response.json()["providers"]
+    }
+    assert providers["custom"]["status"] == "reachable"
+    assert observed_headers["http://custom.local/v1/models"] == {
+        "Authorization": "Bearer custom-secret-key"
+    }
+    for url, headers in observed_headers.items():
+        if not url.startswith("http://custom.local/v1"):
+            assert "Authorization" not in headers
+
+
+def test_admin_custom_provider_status_probes_keyless_endpoint_without_auth(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("CUSTOM_BASE_URL", "http://custom.local/v1")
+    monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
+    app = create_test_app()
+
+    observed_headers: dict[str, dict[str, str]] = {}
+
+    class KeylessAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url: str, headers=None):
+            observed_headers[url] = dict(headers or {})
+            return httpx.Response(200, json={"data": []})
+
+    with patch(
+        "free_claude_code.api.admin_routes.httpx.AsyncClient", KeylessAsyncClient
+    ):
+        response = _local_client(app).get("/admin/api/providers/local-status")
+
+    assert response.status_code == 200
+    providers = {
+        provider["provider_id"]: provider for provider in response.json()["providers"]
+    }
+    assert providers["custom"]["status"] == "reachable"
+    assert observed_headers["http://custom.local/v1/models"] == {}
 
 
 def test_admin_config_exposes_structured_provider_configuration_targets(
@@ -1591,7 +1676,7 @@ def test_admin_local_provider_failure_does_not_return_exception_text(
         async def __aexit__(self, *args):
             return None
 
-        async def get(self, url: str):
+        async def get(self, url: str, headers=None):
             raise RuntimeError(
                 "Provider rejected credential CREDENTIAL[unrecognized-format-987654321]"
             )
